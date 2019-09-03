@@ -1,0 +1,21 @@
+[[source]]
+name = "pypi"
+url = "https://pypi.org/simple"
+verify_ssl = true
+
+[dev-packages]
+jupyterlab = "*"
+seaborn = "*"
+
+[packages]
+numpy = "*"
+torch = {file = "https://download.pytorch.org/whl/cu100/torch-1.2.0-cp37-cp37m-win_amd64.whl"}
+tensorboard = "*"
+future = "*"
+pandas = "*"
+scikit-learn = "==0.21.0"
+pytorch-transformers = "*"
+
+
+[requires]
+python_version = "3.7"
