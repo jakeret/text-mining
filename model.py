@@ -2,7 +2,6 @@ import glob
 import logging
 import os
 from datetime import datetime
-from enum import Enum
 
 import numpy as np
 import torch
@@ -15,12 +14,14 @@ from tqdm import tqdm, trange
 
 from transformer_utils import convert_examples_to_features, DataProcessor
 
+EVAL_RESULTS_FILE_NAME = "eval_results_{}.txt"
+
 MODEL_CLASS = BertForSequenceClassification
 
 TOKENIZER_CLASS = BertTokenizer
 
 MODEL_NAME = "bert-base-german-cased"
-MODEL_NAME = "bert-base-uncased"
+# MODEL_NAME = "bert-base-uncased"
 
 
 logger = logging.getLogger(__name__)
@@ -28,27 +29,19 @@ logger = logging.getLogger(__name__)
 WEIGHTS_NAME = "pytorch_model.bin"
 
 
-class Column(Enum):
-    HAS_ATTACHMENTS = "has_attachments"
-    CONTENT = "content"
-    SUBJECT = "subject"
-    SENDER = "sender"
-    CHANNEL = "channel_id"
-    CHANNEL_NAME = "channel_name"
-    LANGUAGE = "language"
-    RECEIVED_DATE = "received_date"
-    PROCESSING_DATE = "processing_date"
-    LABEL = "code_a"
-    CODE_B = "code_b"
-
-
-class Dataset(Enum):
-    Train = "train"
-    Validation = "validation"
-
-
-DEFAULT_HYPERPARAMETERS = {
-}
+DEFAULT_HYPERPARAMETERS = dict(
+    per_gpu_train_batch_size = 8,
+    max_steps = -1,
+    num_train_epochs = 3.0,
+    gradient_accumulation_steps = 1,
+    learning_rate = 2e-5,
+    adam_epsilon = 1e-8,
+    warmup_steps = 0,
+    max_grad_norm = 1.0,
+    weight_decay = 0.0,
+    do_lower_case=False,
+    max_seq_length = 128,
+)
 
 def evaluate_checkpoints(do_lower_case, output_dir, data_dir, max_seq_length):
     results = {}
@@ -127,14 +120,18 @@ def evaluate(eval_dataset, model, eval_output_dir, prefix=""):
     result = compute_metrics(preds, out_label_ids)
     results.update(result)
 
-    output_eval_file = os.path.join(eval_output_dir, "eval_results.txt")
+    store_eval_results(result, eval_output_dir, prefix)
+
+    return results
+
+
+def store_eval_results(result, eval_output_dir, prefix):
+    output_eval_file = os.path.join(eval_output_dir, EVAL_RESULTS_FILE_NAME.format(prefix))
     with open(output_eval_file, "w") as writer:
         logger.info("***** Eval results {} *****".format(prefix))
         for key in sorted(result.keys()):
             logger.info("  %s = %s", key, str(result[key]))
             writer.write("%s = %s\n" % (key, str(result[key])))
-
-    return results
 
 
 def build_model(do_lower_case):
@@ -197,22 +194,22 @@ def load_and_cache_examples(tokenizer, data_dir, max_seq_length, evaluate=False)
 
 
 
-def train(train_dataset, eval_dataset, model, output_dir, **hyperparams):
+def train(train_dataset, eval_dataset, model, output_dir,
+          per_gpu_train_batch_size,
+          max_steps,
+          num_train_epochs,
+          gradient_accumulation_steps,
+          learning_rate,
+          adam_epsilon,
+          warmup_steps,
+          max_grad_norm,
+          weight_decay,
+          logging_steps=50,
+          evaluate_during_training=True,
+          save_steps=50
+          ):
     """ Train the model """
 
-    per_gpu_train_batch_size = 1
-    max_steps = -1
-    num_train_epochs = 3.0
-    gradient_accumulation_steps = 1
-    learning_rate = 2e-5
-    adam_epsilon = 1e-8
-    warmup_steps = 0
-    max_grad_norm = 1.0
-    weight_decay = 0.0
-
-    logging_steps = 50
-    evaluate_during_training = True
-    save_steps = 50
 
     n_gpu = torch.cuda.device_count()
     train_batch_size = per_gpu_train_batch_size * max(1, n_gpu)
@@ -315,12 +312,15 @@ def get_log_dir(output_dir):
 
 def log_metrics(eval_dataset, evaluate_during_training, global_step, logging_loss, logging_steps, model, output_dir,
                 scheduler, tb_writer, tr_loss):
+
     if evaluate_during_training:  # Only evaluate when single GPU otherwise metrics may not average well
         results = evaluate(eval_dataset, model, output_dir)
         for key, value in results.items():
             tb_writer.add_scalar('eval_{}'.format(key), value, global_step)
+
     tb_writer.add_scalar('lr', scheduler.get_lr()[0], global_step)
     tb_writer.add_scalar('loss', (tr_loss - logging_loss) / logging_steps, global_step)
+    tb_writer.flush()
 
 
 def save_model_checkpoint(global_step, model, output_dir):

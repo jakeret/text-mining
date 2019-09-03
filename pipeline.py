@@ -38,8 +38,8 @@ def train_model(data_dir:str, output_dir:str, model_dir:str, **hyperparams:Dict)
     params.update(hyperparams)
     logger.info("Hyperparameters: %s", params)
 
-    do_lower_case = True
-    max_seq_length = 128
+    do_lower_case = params.pop("do_lower_case")
+    max_seq_length = params.pop("max_seq_length")
 
     model_pipeline, tokenizer = model.build_model(do_lower_case=do_lower_case)
 
