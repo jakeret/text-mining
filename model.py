@@ -68,24 +68,17 @@ def evaluate_checkpoints(do_lower_case, output_dir, data_dir, max_seq_length):
     return results
 
 
-def evaluate(eval_dataset, model, eval_output_dir, prefix=""):
-    per_gpu_eval_batch_size = 8
-
-    results = {}
-
-    if not os.path.exists(eval_output_dir):
-        os.makedirs(eval_output_dir)
-
+def evaluate(dataset, model, eval_output_dir, prefix="", per_gpu_eval_batch_size = 8):
     n_gpu = torch.cuda.device_count()
     eval_batch_size = per_gpu_eval_batch_size * max(1, n_gpu)
 
-    eval_sampler = SequentialSampler(eval_dataset)
-
-    eval_dataloader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=eval_batch_size)
+    eval_dataloader = DataLoader(dataset,
+                                 sampler=SequentialSampler(dataset),
+                                 batch_size=eval_batch_size)
 
     # Eval!
     logger.info("***** Running evaluation {} *****".format(prefix))
-    logger.info("  Num examples = %d", len(eval_dataset))
+    logger.info("  Num examples = %d", len(dataset))
     logger.info("  Batch size = %d", eval_batch_size)
     eval_loss = 0.0
     nb_eval_steps = 0
@@ -95,37 +88,40 @@ def evaluate(eval_dataset, model, eval_output_dir, prefix=""):
 
     for batch in tqdm(eval_dataloader, desc="Evaluating"):
         model.eval()
-        batch = tuple(t.to(device) for t in batch)
+        input_ids, attention_mask, token_type_ids, labels = tuple(t.to(device) for t in batch)
 
         with torch.no_grad():
-            inputs = {'input_ids':      batch[0],
-                      'attention_mask': batch[1],
-                      'token_type_ids': batch[2],
-                      'labels':         batch[3]}
-            outputs = model(**inputs)
-            tmp_eval_loss, logits = outputs[:2]
+
+            tmp_eval_loss, logits = model(input_ids=input_ids,
+                                          attention_mask=attention_mask,
+                                          token_type_ids=token_type_ids,
+                                          labels=labels)
 
             eval_loss += tmp_eval_loss.mean().item()
+
         nb_eval_steps += 1
         if preds is None:
             preds = logits.detach().cpu().numpy()
-            out_label_ids = inputs['labels'].detach().cpu().numpy()
+            out_label_ids = labels.detach().cpu().numpy()
         else:
             preds = np.append(preds, logits.detach().cpu().numpy(), axis=0)
-            out_label_ids = np.append(out_label_ids, inputs['labels'].detach().cpu().numpy(), axis=0)
+            out_label_ids = np.append(out_label_ids, labels.detach().cpu().numpy(), axis=0)
 
-    eval_loss = eval_loss / nb_eval_steps
     preds = np.argmax(preds, axis=1)
 
-    result = compute_metrics(preds, out_label_ids)
-    results.update(result)
+    results = compute_metrics(preds, out_label_ids)
 
-    store_eval_results(result, eval_output_dir, prefix)
+    results["loss"] = eval_loss / nb_eval_steps
+
+    store_eval_results(results, eval_output_dir, prefix)
 
     return results
 
 
 def store_eval_results(result, eval_output_dir, prefix):
+    if not os.path.exists(eval_output_dir):
+        os.makedirs(eval_output_dir)
+
     output_eval_file = os.path.join(eval_output_dir, EVAL_RESULTS_FILE_NAME.format(prefix))
     with open(output_eval_file, "w") as writer:
         logger.info("***** Eval results {} *****".format(prefix))
@@ -246,25 +242,25 @@ def train(train_dataset, eval_dataset, model, output_dir,
     logger.info("  Total optimization steps = %d", t_total)
 
     global_step = 0
-    tr_loss, logging_loss = 0.0, 0.0
+    tr_loss = 0.0
+    logging_loss = 0.0
+
     model.zero_grad()
-    train_iterator = trange(int(num_train_epochs), desc="Epoch", disable=False)
-    # set_seed(args)  # Added here for reproductibility (even between python 2 and 3)
 
     tb_writer = SummaryWriter(log_dir=get_log_dir(output_dir))
+    device = get_device()
 
-
+    train_iterator = trange(int(num_train_epochs), desc="Epoch", disable=False)
     for _ in train_iterator:
         epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=False)
         for step, batch in enumerate(epoch_iterator):
             model.train()
-            batch = tuple(t.to(get_device()) for t in batch)
-            inputs = {'input_ids':      batch[0],
-                      'attention_mask': batch[1],
-                      'token_type_ids': batch[2],
-                      'labels':         batch[3]}
-            outputs = model(**inputs)
-            loss = outputs[0]  # model outputs are always tuple in pytorch-transformers (see doc)
+            input_ids, attention_mask, token_type_ids, labels = tuple(t.to(device) for t in batch)
+
+            loss, _ = model(input_ids=input_ids,
+                            attention_mask=attention_mask,
+                            token_type_ids=token_type_ids,
+                            labels=labels)
 
             if gradient_accumulation_steps > 1:
                 loss = loss / gradient_accumulation_steps
@@ -281,21 +277,26 @@ def train(train_dataset, eval_dataset, model, output_dir,
 
                 if logging_steps > 0 and global_step % logging_steps == 0:
                     # Log metrics
+                    log_performance_evaluation(train_dataset, "train", global_step, model, output_dir, tb_writer)
 
-                    log_metrics(eval_dataset, evaluate_during_training, global_step, logging_loss, logging_steps, model,
-                                output_dir, scheduler, tb_writer, tr_loss)
+                    if evaluate_during_training:  # Only evaluate when single GPU otherwise metrics may not average well
+                        log_performance_evaluation(eval_dataset, "eval", global_step, model, output_dir, tb_writer)
+
+                    tb_writer.add_scalar('lr', scheduler.get_lr()[0], global_step)
+                    tb_writer.add_scalar('loss', (tr_loss - logging_loss) / logging_steps, global_step)
+                    tb_writer.flush()
+
                     logging_loss = tr_loss
-
 
                 if save_steps > 0 and global_step % save_steps == 0:
                     # Save model checkpoint
                     save_model_checkpoint(global_step, model, output_dir)
 
-            if max_steps > 0 and global_step > max_steps:
+            if 0 < max_steps < global_step:
                 epoch_iterator.close()
                 break
 
-        if max_steps > 0 and global_step > max_steps:
+        if 0 < max_steps < global_step:
             train_iterator.close()
             break
 
@@ -304,23 +305,16 @@ def train(train_dataset, eval_dataset, model, output_dir,
     return global_step, tr_loss / global_step
 
 
+def log_performance_evaluation(dataset, prefix, global_step, model, output_dir, tb_writer):
+    results = evaluate(dataset, model, output_dir)
+    for key, value in results.items():
+        tb_writer.add_scalar('{}/{}'.format(prefix, key), value, global_step)
+
+
 def get_log_dir(output_dir):
     current_time = datetime.now().strftime('%b%d_%H-%M-%S')
     log_dir = os.path.join(output_dir, 'runs', current_time)
     return log_dir
-
-
-def log_metrics(eval_dataset, evaluate_during_training, global_step, logging_loss, logging_steps, model, output_dir,
-                scheduler, tb_writer, tr_loss):
-
-    if evaluate_during_training:  # Only evaluate when single GPU otherwise metrics may not average well
-        results = evaluate(eval_dataset, model, output_dir)
-        for key, value in results.items():
-            tb_writer.add_scalar('eval_{}'.format(key), value, global_step)
-
-    tb_writer.add_scalar('lr', scheduler.get_lr()[0], global_step)
-    tb_writer.add_scalar('loss', (tr_loss - logging_loss) / logging_steps, global_step)
-    tb_writer.flush()
 
 
 def save_model_checkpoint(global_step, model, output_dir):
