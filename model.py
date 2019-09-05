@@ -93,11 +93,12 @@ def evaluate(dataset, model, eval_output_dir, prefix="", per_gpu_eval_batch_size
 
         with torch.no_grad():
 
-            tmp_eval_loss, logits = model(input_ids=input_ids,
+            output = model(input_ids=input_ids,
                                           attention_mask=attention_mask,
                                           token_type_ids=token_type_ids,
                                           labels=labels)
-
+            tmp_eval_loss = output[0]
+            logits = output[1]
             eval_loss += tmp_eval_loss.mean().item()
 
         nb_eval_steps += 1
@@ -132,7 +133,7 @@ def store_eval_results(result, eval_output_dir, prefix):
 
 
 def build_model(do_lower_case, num_labels):
-    config = BertConfig.from_pretrained(MODEL_NAME, num_labels=num_labels)
+    config = BertConfig.from_pretrained(MODEL_NAME, num_labels=num_labels, output_hidden_states=True)
     tokenizer = TOKENIZER_CLASS.from_pretrained(MODEL_NAME, do_lower_case=do_lower_case)
     model = MODEL_CLASS.from_pretrained(MODEL_NAME, config=config)
 
@@ -201,11 +202,12 @@ def train(model, tokenizer, train_dataset, eval_dataset, output_dir, per_gpu_tra
             model.train()
             input_ids, attention_mask, token_type_ids, labels = tuple(t.to(device) for t in batch)
 
-            loss, _ = model(input_ids=input_ids,
+            outputs = model(input_ids=input_ids,
                             attention_mask=attention_mask,
                             token_type_ids=token_type_ids,
                             labels=labels)
 
+            loss = outputs[0]
             if gradient_accumulation_steps > 1:
                 loss = loss / gradient_accumulation_steps
 

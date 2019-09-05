@@ -44,7 +44,7 @@ def run_training(train:str, test:str, model_dir:str, output_data_dir:str, **hype
                                            params["max_seq_length"],
                                            evaluate=True)
 
-    results = model.evaluate_checkpoints(eval_dataset, output_data_dir)
+    results = model.evaluate_checkpoints(eval_dataset, output_data_dir, eval_all_checkpoints=True)
 
 
 def train_model(train_data_dir:str, test_data_dir: str, output_dir:str, model_dir:str, **hyperparams:Dict):
@@ -68,8 +68,7 @@ def train_model(train_data_dir:str, test_data_dir: str, output_dir:str, model_di
                                            evaluate=True)
 
 
-    global_step, tr_loss = model.train(model_pipeline, tokenizer, train_dataset, eval_dataset, output_dir, **hyperparams)
-    logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
+    model.train(model_pipeline, tokenizer, train_dataset, eval_dataset, output_dir, **hyperparams)
 
     utils.write_model(model_pipeline, tokenizer, model_dir)
 
