@@ -5,8 +5,13 @@ import os
 import traceback
 from typing import Dict
 
+import torch
+from torch.utils.data import TensorDataset
+
 import model
 import utils
+from model import MODEL_NAME, logger
+from transformer_utils import DataProcessor, convert_examples_to_features
 
 DEPENDENCIES = ["nltk==3.4.4"]
 
@@ -24,53 +29,98 @@ def run_training(train:str, test:str, model_dir:str, output_data_dir:str, **hype
 
     # install_dependencies()
 
-    model_pipeline = train_model(train, output_data_dir , model_dir, **hyperparams)
-
-    # model.evaluate(model_pipeline, train_data, output_data_dir)
-
-    # test_data = load_data(Path(test) / TEST_FILE_NAME)
-    # model.evaluate(model_pipeline, test_data, output_data_dir)
-
-
-
-def train_model(data_dir:str, output_dir:str, model_dir:str, **hyperparams:Dict):
     params = model.DEFAULT_HYPERPARAMETERS.copy()
     params.update(hyperparams)
     logger.info("Hyperparameters: %s", params)
 
-    do_lower_case = params.pop("do_lower_case")
-    max_seq_length = params.pop("max_seq_length")
+    model_pipeline, tokenizer = train_model(train,
+                                            test,
+                                            output_data_dir ,
+                                            model_dir,
+                                            **params)
 
-    model_pipeline, tokenizer = model.build_model(do_lower_case=do_lower_case)
+    eval_dataset = load_and_cache_examples(tokenizer,
+                                           test,
+                                           params["max_seq_length"],
+                                           evaluate=True)
 
-    train_dataset = model.load_and_cache_examples(tokenizer,
-                                                  data_dir,
-                                                  max_seq_length,
-                                                  evaluate=False)
+    results = model.evaluate_checkpoints(eval_dataset, output_data_dir)
 
-    eval_dataset = model.load_and_cache_examples(tokenizer,
-                                                 data_dir,
-                                                 max_seq_length,
-                                                 evaluate=True)
 
+def train_model(train_data_dir:str, test_data_dir: str, output_dir:str, model_dir:str, **hyperparams:Dict):
+
+    do_lower_case = hyperparams.pop("do_lower_case")
+    max_seq_length = hyperparams.pop("max_seq_length")
+
+    model_pipeline, tokenizer = model.build_model(do_lower_case=do_lower_case,
+                                                  num_labels=(len(DataProcessor().get_labels())))
+
+    train_dataset = load_and_cache_examples(tokenizer,
+                                            train_data_dir,
+                                            max_seq_length,
+                                            evaluate=False)
 
     logger.info("Start training")
 
-    global_step, tr_loss = model.train(train_dataset, eval_dataset, model_pipeline, output_dir, **params)
+    eval_dataset = load_and_cache_examples(tokenizer,
+                                           test_data_dir,
+                                           max_seq_length,
+                                           evaluate=True)
+
+
+    global_step, tr_loss = model.train(train_dataset, eval_dataset, model_pipeline, output_dir, **hyperparams)
     logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
 
     utils.write_model(model_pipeline, tokenizer, model_dir)
 
-
-    results = model.evaluate_checkpoints(do_lower_case,
-                                         output_dir,
-                                         data_dir,
-                                         max_seq_length)
-
-
     logger.info("Training done")
 
-    return model_pipeline
+    return model_pipeline, tokenizer
+
+
+def load_and_cache_examples(tokenizer, data_dir, max_seq_length, evaluate=False):
+    # Load data features from cache or dataset file
+
+    cached_features_file = os.path.join(data_dir, 'cached_{}_{}_{}'.format(
+        'dev' if evaluate else 'train',
+        list(filter(None, MODEL_NAME.split('/'))).pop(),
+        str(max_seq_length)))
+
+    if os.path.exists(cached_features_file):
+        logger.info("Loading features from cached file %s", cached_features_file)
+        features = torch.load(cached_features_file)
+
+    else:
+        features = load_features(tokenizer, data_dir, max_seq_length, evaluate)
+        logger.info("Saving features into cached file %s", cached_features_file)
+        torch.save(features, cached_features_file)
+
+    # Convert to Tensors and build dataset
+    all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
+    all_input_mask = torch.tensor([f.input_mask for f in features], dtype=torch.long)
+    all_segment_ids = torch.tensor([f.segment_ids for f in features], dtype=torch.long)
+    all_label_ids = torch.tensor([f.label_id for f in features], dtype=torch.long)
+
+    dataset = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids)
+    return dataset
+
+
+def load_features(tokenizer, data_dir, max_seq_length, evaluate):
+    processor = DataProcessor()
+    logger.info("Creating features from dataset file at %s", data_dir)
+    label_list = processor.get_labels()
+    examples = processor.get_dev_examples(data_dir) if evaluate else processor.get_train_examples(data_dir)
+    features = convert_examples_to_features(examples, label_list, max_seq_length, tokenizer, "classification",
+                                            cls_token_at_end=False,
+                                            cls_token=tokenizer.cls_token,
+                                            cls_token_segment_id=0,
+                                            sep_token=tokenizer.sep_token,
+                                            sep_token_extra=False,
+                                            pad_on_left=False,
+                                            pad_token=tokenizer.convert_tokens_to_ids([tokenizer.pad_token])[0],
+                                            pad_token_segment_id=0,
+                                            )
+    return features
 
 
 def _infer_dtype(value: str):
@@ -122,3 +172,5 @@ if __name__ =='__main__':
         logger.exception("Training failed")
         traceback.print_exc()
         raise e
+
+

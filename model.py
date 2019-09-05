@@ -8,11 +8,9 @@ import torch
 from pytorch_transformers import AdamW, WarmupLinearSchedule
 from pytorch_transformers import BertConfig, BertTokenizer, BertForSequenceClassification
 from sklearn import metrics
-from torch.utils.data import TensorDataset, RandomSampler, DataLoader, SequentialSampler
+from torch.utils.data import RandomSampler, DataLoader, SequentialSampler
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm, trange
-
-from transformer_utils import convert_examples_to_features, DataProcessor
 
 EVAL_RESULTS_FILE_NAME = "eval_results_{}.txt"
 
@@ -43,23 +41,24 @@ DEFAULT_HYPERPARAMETERS = dict(
     max_seq_length = 128,
 )
 
-def evaluate_checkpoints(do_lower_case, output_dir, data_dir, max_seq_length):
-    results = {}
-    eval_all_checkpoints = True
 
-    tokenizer = TOKENIZER_CLASS.from_pretrained(output_dir, do_lower_case=do_lower_case)
-    eval_dataset = load_and_cache_examples(tokenizer, data_dir, max_seq_length, evaluate=True)
-
+def evaluate_checkpoints(eval_dataset, output_dir, eval_all_checkpoints = True):
     checkpoints = [output_dir]
     if eval_all_checkpoints:
-        checkpoints = list(os.path.dirname(c) for c in sorted(glob.glob(output_dir + '/**/' + WEIGHTS_NAME, recursive=True)))
+        checkpoints = list(os.path.dirname(c) for c in glob.glob(output_dir + '/**/' + WEIGHTS_NAME, recursive=True))
         logging.getLogger("pytorch_transformers.modeling_utils").setLevel(logging.WARN)  # Reduce logging
 
+    results = {}
     logger.info("Evaluate the following checkpoints: %s", checkpoints)
     for checkpoint in checkpoints:
         global_step = checkpoint.split('-')[-1] if len(checkpoints) > 1 else ""
         model = MODEL_CLASS.from_pretrained(checkpoint)
         model.to(get_device())
+
+        try:
+            global_step = int(global_step)
+        except ValueError:
+            global_step = "final"
 
         result = evaluate(eval_dataset, model, output_dir, prefix=global_step)
         result = dict((k + '_{}'.format(global_step), v) for k, v in result.items())
@@ -130,12 +129,8 @@ def store_eval_results(result, eval_output_dir, prefix):
             writer.write("%s = %s\n" % (key, str(result[key])))
 
 
-def build_model(do_lower_case):
-    processor = DataProcessor()
-    label_list = processor.get_labels()
-    num_labels = len(label_list)
-
-    config = BertConfig.from_pretrained(MODEL_NAME, num_labels=num_labels, finetuning_task="MRPC")
+def build_model(do_lower_case, num_labels):
+    config = BertConfig.from_pretrained(MODEL_NAME, num_labels=num_labels)
     tokenizer = BertTokenizer.from_pretrained(MODEL_NAME, do_lower_case=do_lower_case)
     model = BertForSequenceClassification.from_pretrained(MODEL_NAME, config=config)
 
@@ -146,48 +141,6 @@ def build_model(do_lower_case):
 
 def get_device():
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-def load_and_cache_examples(tokenizer, data_dir, max_seq_length, evaluate=False):
-    processor = DataProcessor()
-    # Load data features from cache or dataset file
-
-    cached_features_file = os.path.join(data_dir, 'cached_{}_{}_{}'.format(
-        'dev' if evaluate else 'train',
-        list(filter(None, MODEL_NAME.split('/'))).pop(),
-        str(max_seq_length)))
-
-    if os.path.exists(cached_features_file):
-        logger.info("Loading features from cached file %s", cached_features_file)
-        features = torch.load(cached_features_file)
-
-    else:
-        logger.info("Creating features from dataset file at %s", data_dir)
-        label_list = processor.get_labels()
-        examples = processor.get_dev_examples(data_dir) if evaluate else processor.get_train_examples(data_dir)
-
-        features = convert_examples_to_features(examples, label_list, max_seq_length, tokenizer, "classification",
-                                                cls_token_at_end=False,
-                                                cls_token=tokenizer.cls_token,
-                                                cls_token_segment_id=0,
-                                                sep_token=tokenizer.sep_token,
-                                                sep_token_extra=False,
-                                                pad_on_left=False,
-                                                pad_token=tokenizer.convert_tokens_to_ids([tokenizer.pad_token])[0],
-                                                pad_token_segment_id=0,
-                                                )
-        logger.info("Saving features into cached file %s", cached_features_file)
-        torch.save(features, cached_features_file)
-
-    # Convert to Tensors and build dataset
-    all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
-    all_input_mask = torch.tensor([f.input_mask for f in features], dtype=torch.long)
-    all_segment_ids = torch.tensor([f.segment_ids for f in features], dtype=torch.long)
-    all_label_ids = torch.tensor([f.label_id for f in features], dtype=torch.long)
-
-    dataset = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids)
-    return dataset
-
 
 
 def train(train_dataset, eval_dataset, model, output_dir,
