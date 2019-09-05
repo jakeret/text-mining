@@ -1,5 +1,6 @@
 import csv
 import logging
+import os
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -54,9 +55,10 @@ def convert_dates(dataset: pd.DataFrame):
 
 
 def write_model(model, tokenizer, model_dir: str):
-    logger.info("Writing model to: '%s'", model_dir)
-
     logger.info("Saving model checkpoint to %s", model_dir)
+    if not os.path.exists(model_dir):
+        os.makedirs(model_dir)
+
     # Save a trained model, configuration and tokenizer using `save_pretrained()`.
     # They can then be reloaded using `from_pretrained()`
     model_to_save = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training

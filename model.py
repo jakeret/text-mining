@@ -12,6 +12,8 @@ from torch.utils.data import RandomSampler, DataLoader, SequentialSampler
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm, trange
 
+import utils
+
 EVAL_RESULTS_FILE_NAME = "eval_results_{}.txt"
 
 MODEL_CLASS = BertForSequenceClassification
@@ -131,8 +133,8 @@ def store_eval_results(result, eval_output_dir, prefix):
 
 def build_model(do_lower_case, num_labels):
     config = BertConfig.from_pretrained(MODEL_NAME, num_labels=num_labels)
-    tokenizer = BertTokenizer.from_pretrained(MODEL_NAME, do_lower_case=do_lower_case)
-    model = BertForSequenceClassification.from_pretrained(MODEL_NAME, config=config)
+    tokenizer = TOKENIZER_CLASS.from_pretrained(MODEL_NAME, do_lower_case=do_lower_case)
+    model = MODEL_CLASS.from_pretrained(MODEL_NAME, config=config)
 
     model.to(get_device())
 
@@ -143,20 +145,9 @@ def get_device():
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def train(train_dataset, eval_dataset, model, output_dir,
-          per_gpu_train_batch_size,
-          max_steps,
-          num_train_epochs,
-          gradient_accumulation_steps,
-          learning_rate,
-          adam_epsilon,
-          warmup_steps,
-          max_grad_norm,
-          weight_decay,
-          logging_steps=50,
-          evaluate_during_training=True,
-          save_steps=50
-          ):
+def train(model, tokenizer, train_dataset, eval_dataset, output_dir, per_gpu_train_batch_size, max_steps,
+          num_train_epochs, gradient_accumulation_steps, learning_rate, adam_epsilon, warmup_steps, max_grad_norm,
+          weight_decay, logging_steps=50, evaluate_during_training=True, save_steps=50):
     """ Train the model """
 
 
@@ -243,7 +234,7 @@ def train(train_dataset, eval_dataset, model, output_dir,
 
                 if save_steps > 0 and global_step % save_steps == 0:
                     # Save model checkpoint
-                    save_model_checkpoint(global_step, model, output_dir)
+                    save_model_checkpoint(tokenizer, model, global_step, output_dir)
 
             if 0 < max_steps < global_step:
                 epoch_iterator.close()
@@ -270,15 +261,9 @@ def get_log_dir(output_dir):
     return log_dir
 
 
-def save_model_checkpoint(global_step, model, output_dir):
+def save_model_checkpoint(model, tokenizer, global_step, output_dir):
     output_dir = os.path.join(output_dir, 'checkpoint-{}'.format(global_step))
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-    model_to_save = model.module if hasattr(model, 'module') else model  # Take care of distributed/parallel training
-    model_to_save.save_pretrained(output_dir)
-    # torch.save(args, os.path.join(output_dir, 'training_args.bin'))
-    logger.info("Saving model checkpoint to %s", output_dir)
-    return output_dir
+    utils.write_model(model, tokenizer, output_dir)
 
 
 def compute_metrics(preds, labels):

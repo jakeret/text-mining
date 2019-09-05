@@ -68,7 +68,7 @@ def train_model(train_data_dir:str, test_data_dir: str, output_dir:str, model_di
                                            evaluate=True)
 
 
-    global_step, tr_loss = model.train(train_dataset, eval_dataset, model_pipeline, output_dir, **hyperparams)
+    global_step, tr_loss = model.train(model_pipeline, tokenizer, train_dataset, eval_dataset, output_dir, **hyperparams)
     logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
 
     utils.write_model(model_pipeline, tokenizer, model_dir)
@@ -81,14 +81,10 @@ def train_model(train_data_dir:str, test_data_dir: str, output_dir:str, model_di
 def load_and_cache_examples(tokenizer, data_dir, max_seq_length, evaluate=False):
     # Load data features from cache or dataset file
 
-    cached_features_file = os.path.join(data_dir, 'cached_{}_{}_{}'.format(
-        'dev' if evaluate else 'train',
-        list(filter(None, MODEL_NAME.split('/'))).pop(),
-        str(max_seq_length)))
+    cached_features_file = get_cache_file_path(data_dir, max_seq_length, evaluate)
 
     if os.path.exists(cached_features_file):
-        logger.info("Loading features from cached file %s", cached_features_file)
-        features = torch.load(cached_features_file)
+        features = load_cached_features(cached_features_file)
 
     else:
         features = load_features(tokenizer, data_dir, max_seq_length, evaluate)
@@ -96,13 +92,31 @@ def load_and_cache_examples(tokenizer, data_dir, max_seq_length, evaluate=False)
         torch.save(features, cached_features_file)
 
     # Convert to Tensors and build dataset
+    all_input_ids, all_input_mask, all_segment_ids, all_label_ids = convert_to_tensors(features)
+    dataset = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids)
+    return dataset
+
+
+def convert_to_tensors(features):
     all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
     all_input_mask = torch.tensor([f.input_mask for f in features], dtype=torch.long)
     all_segment_ids = torch.tensor([f.segment_ids for f in features], dtype=torch.long)
     all_label_ids = torch.tensor([f.label_id for f in features], dtype=torch.long)
+    return all_input_ids, all_input_mask, all_segment_ids, all_label_ids
 
-    dataset = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids)
-    return dataset
+
+def load_cached_features(cached_features_file):
+    logger.info("Loading features from cached file %s", cached_features_file)
+    features = torch.load(cached_features_file)
+    return features
+
+
+def get_cache_file_path(data_dir, max_seq_length, evaluate):
+    cached_features_file = os.path.join(data_dir, 'cached_{}_{}_{}'.format(
+        'dev' if evaluate else 'train',
+        list(filter(None, MODEL_NAME.split('/'))).pop(),
+        str(max_seq_length)))
+    return cached_features_file
 
 
 def load_features(tokenizer, data_dir, max_seq_length, evaluate):
@@ -110,7 +124,16 @@ def load_features(tokenizer, data_dir, max_seq_length, evaluate):
     logger.info("Creating features from dataset file at %s", data_dir)
     label_list = processor.get_labels()
     examples = processor.get_dev_examples(data_dir) if evaluate else processor.get_train_examples(data_dir)
-    features = convert_examples_to_features(examples, label_list, max_seq_length, tokenizer, "classification",
+    features = build_features(examples, label_list, max_seq_length, tokenizer)
+    return features
+
+
+def build_features(examples, label_list, max_seq_length, tokenizer):
+    features = convert_examples_to_features(examples,
+                                            label_list,
+                                            max_seq_length,
+                                            tokenizer,
+                                            "classification",
                                             cls_token_at_end=False,
                                             cls_token=tokenizer.cls_token,
                                             cls_token_segment_id=0,

@@ -121,7 +121,7 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
     features = []
     for (ex_index, example) in enumerate(examples):
         if ex_index % 10000 == 0:
-            logger.info("Writing example %d of %d" % (ex_index, len(examples)))
+            logger.debug("Writing example %d of %d" % (ex_index, len(examples)))
 
         tokens_a = tokenizer.tokenize(example.text_a)
 
@@ -203,14 +203,14 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
             raise KeyError(output_mode)
 
         if ex_index < 5:
-            logger.info("*** Example ***")
-            logger.info("guid: %s" % (example.guid))
-            logger.info("tokens: %s" % " ".join(
+            logger.debug("*** Example ***")
+            logger.debug("guid: %s" % (example.guid))
+            logger.debug("tokens: %s" % " ".join(
                     [str(x) for x in tokens]))
-            logger.info("input_ids: %s" % " ".join([str(x) for x in input_ids]))
-            logger.info("input_mask: %s" % " ".join([str(x) for x in input_mask]))
-            logger.info("segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
-            logger.info("label: %s (id = %d)" % (example.label, label_id))
+            logger.debug("input_ids: %s" % " ".join([str(x) for x in input_ids]))
+            logger.debug("input_mask: %s" % " ".join([str(x) for x in input_mask]))
+            logger.debug("segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
+            logger.debug("label: %s (id = %d)" % (example.label, label_id))
 
         features.append(
                 InputFeatures(input_ids=input_ids,
