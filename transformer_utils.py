@@ -116,7 +116,16 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
         `cls_token_segment_id` define the segment id associated to the CLS token (0 for BERT, 2 for XLNet)
     """
 
-    label_map = {label : i for i, label in enumerate(label_list)}
+    label_map = {label : i for i, label in enumerate(sorted(list(label_list)))}
+    label_map = {'Wirtschaft': 0,
+                 'Sport': 2,
+                 'Web': 1,
+                 'International': 5,
+                 'Panorama': 6,
+                 'Wissenschaft': 7,
+                 'Inland': 8,
+                 'Kultur': 3,
+                 'Etat': 4}
 
     features = []
     for (ex_index, example) in enumerate(examples):

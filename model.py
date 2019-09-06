@@ -94,9 +94,9 @@ def evaluate(dataset, model, eval_output_dir, prefix="", per_gpu_eval_batch_size
         with torch.no_grad():
 
             output = model(input_ids=input_ids,
-                                          attention_mask=attention_mask,
-                                          token_type_ids=token_type_ids,
-                                          labels=labels)
+                           attention_mask=attention_mask,
+                           token_type_ids=token_type_ids,
+                           labels=labels)
             tmp_eval_loss = output[0]
             logits = output[1]
             eval_loss += tmp_eval_loss.mean().item()

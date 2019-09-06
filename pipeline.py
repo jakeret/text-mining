@@ -33,48 +33,42 @@ def run_training(train:str, test:str, model_dir:str, output_data_dir:str, **hype
     params.update(hyperparams)
     logger.info("Hyperparameters: %s", params)
 
-    model_pipeline, tokenizer = train_model(train,
-                                            test,
-                                            output_data_dir ,
-                                            model_dir,
-                                            **params)
-
-    eval_dataset = load_and_cache_examples(tokenizer,
-                                           test,
-                                           params["max_seq_length"],
-                                           evaluate=True)
-
-    results = model.evaluate_checkpoints(eval_dataset, output_data_dir, eval_all_checkpoints=True)
-
-
-def train_model(train_data_dir:str, test_data_dir: str, output_dir:str, model_dir:str, **hyperparams:Dict):
-
-    do_lower_case = hyperparams.pop("do_lower_case")
-    max_seq_length = hyperparams.pop("max_seq_length")
+    do_lower_case = params.pop("do_lower_case")
 
     model_pipeline, tokenizer = model.build_model(do_lower_case=do_lower_case,
                                                   num_labels=(len(DataProcessor().get_labels())))
 
+    max_seq_length = params.pop("max_seq_length")
+
     train_dataset = load_and_cache_examples(tokenizer,
-                                            train_data_dir,
+                                            train,
                                             max_seq_length,
                                             evaluate=False)
 
-    logger.info("Start training")
-
     eval_dataset = load_and_cache_examples(tokenizer,
-                                           test_data_dir,
+                                           test,
                                            max_seq_length,
                                            evaluate=True)
+    train_model(model_pipeline,
+                tokenizer,
+                train_dataset,
+                eval_dataset,
+                output_data_dir,
+                model_dir,
+                **params)
 
+    results = model.evaluate_checkpoints(eval_dataset, output_data_dir, eval_all_checkpoints=True)
+
+
+def train_model(model_pipeline, tokenizer, train_dataset, eval_dataset, output_dir:str, model_dir:str, **hyperparams:Dict):
+
+    logger.info("Start training")
 
     model.train(model_pipeline, tokenizer, train_dataset, eval_dataset, output_dir, **hyperparams)
 
     utils.write_model(model_pipeline, tokenizer, model_dir)
 
     logger.info("Training done")
-
-    return model_pipeline, tokenizer
 
 
 def load_and_cache_examples(tokenizer, data_dir, max_seq_length, evaluate=False):
