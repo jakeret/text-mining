@@ -65,3 +65,16 @@ Hyper params:
 ![alt text](test.png "10kGNAD test progress")
 
 
+### Embeddings
+
+Test sentences:
+
+```
+"Die Prinzessin wohnt im prunkvollen Schloss", 
+"Das Schloss wurde im Mittelalter erbaut",
+"Die Türe benötigt dringend ein neue Schloss",
+"Das Schloss der Kiste ist schon lange defekt"]
+```
+
+![alt text](token_embeddings_similarity.png "token embeddings")
+
